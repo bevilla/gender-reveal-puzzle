@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Jigsaw Puzzle</title>
+<style>
+  html,body{
+    height:100%;
+    margin:0;
+    overflow:hidden;
+    background:#d5b9d8;
+    background-image:url("background.png");
+    background-size: cover;
+    background-repeat: no-repeat;
+    -webkit-user-select: none;  /* Safari, Chrome */
+    -moz-user-select: none;     /* Firefox */
+    -ms-user-select: none;      /* IE/Edge */
+    user-select: none;          /* Opera, standard */
+    touch-action: manipulation;
+  }
+  body{
+    display:flex;align-items:center;justify-content:center;
+  }
+  #board{
+    position:relative;width:90vmin;height:90vmin;max-width:700px;max-height:700px;
+    background:#0a1222;border-radius:10px;touch-action:none;overflow:hidden;
+  }
+  .piece{
+    position:absolute;touch-action:none;user-select:none;cursor:grab;
+    background-repeat:no-repeat;border-radius:6px;
+    box-shadow:0 5px 15px rgba(0,0,0,0.6);transform-origin:center center;
+    transition:box-shadow .15s;
+  }
+  .piece.dragging{
+    box-shadow:0 15px 35px rgba(0,0,0,0.75);cursor:grabbing;
+  }
+  .piece.locked{
+    box-shadow:none;cursor:default;
+  }
+  .win{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,0.8);z-index:999;color:white;flex-direction:column;
+    backdrop-filter:blur(6px);
+  }
+  .win img{
+    max-width:85%;max-height:85%;border-radius:10px;
+  }
+  .msg{
+    margin-top:0em;font-size:2em;color: #86aeff;
+  }
+  .heart {
+    position: absolute;
+    color: #34bfff;
+    text-shadow: 0 0 6px rgba(100, 141, 255, 0.8);
+    animation: floatUp linear forwards;
+    pointer-events: none;
+    z-index: 1000000;
+  }
+  .heart::before {
+    content: "💙";
+  }
+  @keyframes floatUp {
+    0% {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+    70% {
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(-120vh) scale(0.8);
+      opacity: 0;
+    }
+  }
+  #puzzle-top-text {
+    text-align: center;
+    font-size: 1.2em;
+    margin: 20px 0;
+    color: #f6f7c4;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.575);
+    font-family: 'Comic Sans MS', 'Segoe UI', sans-serif;
+  }
+  #puzzle-bottom-text {
+    text-align: center;
+    font-size: 1.2em;
+    margin-top: 20px;
+    color: #444;
+    font-style: italic;
+    font-family: 'Comic Sans MS', 'Segoe UI', sans-serif;
+  }
+  #puzzle-container {
+    display: flex;
+    flex-direction: column; /* ⬅️ stack top → middle → bottom */
+    align-items: center;    /* center horizontally */
+    justify-content: center;
+    width: 100%;
+    min-height: 100vh;      /* optional: fill full screen height */
+    box-sizing: border-box;
+  }
+</style>
+</head>
+<body>
+<div id="puzzle-container">
+<h1 id="puzzle-top-text">💙 밤비 바니의 성별은? 🩷</h1>
+<div id="board"></div>
+<!--
+<h2 id="puzzle-bottom-text">Have fun completing the puzzle!</h2>
+-->
+</div>
+<script>
+/* --- CONFIG --- */
+const PUZZLE_IMAGE = "bambi.jpg";   // your puzzle image (can be relative or URL)
+const WIN_IMAGE    = "boys.jpg";   // image shown when puzzle is completed
+const ROWS = 3;                      // puzzle rows
+const COLS = 3;                      // puzzle columns
+const RANDOM_ROTATION = true;        // randomize initial rotations
+const WIN_SOUND = new Audio("tada.mp3"); // path to your sound file
+/* -------------- */
+
+/*
+// Disable zoom
+document.addEventListener('gesturestart', function (e) {
+    e.preventDefault();
+});
+
+// For touch events (less reliable for pinch, but attempts to stop two-finger interaction)
+document.addEventListener('touchstart', function(event) {
+    if (event.touches.length > 1) {
+        event.preventDefault();
+    }
+}, { passive: false });
+*/
+
+const board=document.getElementById("board");
+let pieces=[], pieceW,pieceH,placed=0,boardRect,zCounter=1000;
+
+loadImage(PUZZLE_IMAGE).then(init);
+
+function loadImage(src){
+  return new Promise((res,rej)=>{
+    const i=new Image();
+    i.onload=()=>res(i);
+    i.onerror=()=>rej("Image load fail");
+    i.src=src;
+  });
+}
+
+function init(img){
+  const W=board.clientWidth,H=board.clientHeight;
+  let dw=W,dh=W*(img.naturalHeight/img.naturalWidth);
+  if(dh>H){dh=H;dw=dh*(img.naturalWidth/img.naturalHeight);}
+  pieceW=dw/COLS; pieceH=dh/ROWS;
+  boardRect=board.getBoundingClientRect();
+  const positions=[];
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)positions.push({x:c*pieceW,y:r*pieceH});
+  const scrambled=positions.slice();shuffle(scrambled);
+  positions.forEach((pos,i)=>{
+    const el=document.createElement("div");
+    el.className="piece";
+    el.style.width=pieceW+"px";
+    el.style.height=pieceH+"px";
+    el.style.backgroundImage=`url('${PUZZLE_IMAGE}')`;
+    el.style.backgroundSize=`${dw}px ${dh}px`;
+    el.style.backgroundPosition=`-${pos.x}px -${pos.y}px`;
+    const rot=RANDOM_ROTATION?[0,90,180,270][Math.floor(Math.random()*4)]:0;
+    const obj={el,correct:pos,rotation:rot,locked:false};
+    const start=scrambled[i];
+    setTransform(el,start.x,start.y,rot);
+    addDrag(obj);
+    board.appendChild(el);
+    pieces.push(obj);
+    snap(obj);
+  });
+}
+
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}}
+
+function addDrag(obj){
+  const el=obj.el;
+  let startX=0,startY=0,offX=0,offY=0,drag=false;
+  let originalPos={x:0,y:0};
+  let clickTimeout=null;
+  
+  el.addEventListener("pointerdown",e=>{
+    if(obj.locked)return;
+    drag=true;el.setPointerCapture(e.pointerId);
+    startX=e.clientX;startY=e.clientY;
+    const rect=el.getBoundingClientRect();
+    offX=startX-rect.left;offY=startY-rect.top;
+    originalPos={x:parseFloat(el.dataset.x),y:parseFloat(el.dataset.y)};
+    el.style.zIndex=++zCounter;
+    el.classList.add("dragging");
+
+    // start click timer to differentiate click from drag
+    clickTimeout=setTimeout(()=>{clickTimeout=null;},250);
+  });
+
+  el.addEventListener("pointermove",e=>{
+    if(!drag)return;
+    const x=e.clientX-boardRect.left-offX;
+    const y=e.clientY-boardRect.top-offY;
+    setTransform(el,x,y,obj.rotation);
+    // cancel click if moved enough
+    if(Math.hypot(e.clientX-startX,e.clientY-startY)>5){
+      if(clickTimeout){clearTimeout(clickTimeout);clickTimeout=null;}
+    }
+  });
+
+  el.addEventListener("pointerup",e=>{
+    if(!drag)return;
+    drag=false;el.releasePointerCapture(e.pointerId);
+    el.classList.remove("dragging");
+
+    // if it was a click (not drag)
+    if(clickTimeout){
+      clearTimeout(clickTimeout);
+      clickTimeout=null;
+      rotatePiece(obj);
+      return;
+    }
+
+    // Otherwise, it's a drag-drop
+    if(!swapIfOverlap(obj,originalPos))snap(obj);
+  });
+}
+
+function setTransform(el,x,y,rot){
+  x = Math.max(0, Math.min(x, board.clientWidth - el.offsetWidth));
+  y = Math.max(0, Math.min(y, board.clientHeight - el.offsetHeight));
+  el.style.transform=`translate(${x}px,${y}px) rotate(${rot}deg)`;
+  el.dataset.x=x;el.dataset.y=y;
+}
+
+function rotatePiece(obj){
+  if(obj.locked)return;
+  obj.rotation=(obj.rotation+90)%360;
+  const x=parseFloat(obj.el.dataset.x),y=parseFloat(obj.el.dataset.y);
+  setTransform(obj.el,x,y,obj.rotation);
+  snap(obj);
+}
+
+function swapIfOverlap(dragged,originalPos){
+  const ra=dragged.el.getBoundingClientRect();
+  for(const other of pieces){
+    //if(other===dragged||other.locked)continue;
+    if(other===dragged)continue;
+    const rb=other.el.getBoundingClientRect();
+    const overlapX=Math.max(0,Math.min(ra.right,rb.right)-Math.max(ra.left,rb.left));
+    const overlapY=Math.max(0,Math.min(ra.bottom,rb.bottom)-Math.max(ra.top,rb.top));
+    const area=overlapX*overlapY;
+    if(area>(ra.width*ra.height)*0.35){
+      if (other.locked) {
+        // if locked just teleport dragged piece back to its original location
+        setTransform(dragged.el,originalPos.x,originalPos.y,dragged.rotation);
+        snap(dragged);
+        return true;
+      }
+      // Swap positions only (keep rotations)
+      const bx=parseFloat(other.el.dataset.x),by=parseFloat(other.el.dataset.y);
+      setTransform(dragged.el,bx,by,dragged.rotation);
+      setTransform(other.el,originalPos.x,originalPos.y,other.rotation);
+      snap(dragged);
+      snap(other);
+      return true;
+    }
+  }
+  return false;
+}
+
+function snap_old(obj){
+  if(obj.locked)return;
+  const x=parseFloat(obj.el.dataset.x),y=parseFloat(obj.el.dataset.y);
+  const dx=x-obj.correct.x,dy=y-obj.correct.y;
+  const dist=Math.hypot(dx,dy);
+  const correctRot=((obj.rotation%360)+360)%360===0;
+  if(dist<pieceW*0.6&&correctRot){
+    setTransform(obj.el,obj.correct.x,obj.correct.y,0);
+    obj.locked=true;
+    placed++;
+    if(placed===ROWS*COLS)win();
+  }
+}
+
+function snap(obj){
+  if(obj.locked) return;
+
+  // Snap to nearest grid cell
+  const nearestX = Math.round(parseFloat(obj.el.dataset.x) / pieceW) * pieceW;
+  const nearestY = Math.round(parseFloat(obj.el.dataset.y) / pieceH) * pieceH;
+
+  setTransform(obj.el, nearestX, nearestY, obj.rotation);
+
+  // Check if piece is actually correct
+  const dx = nearestX - obj.correct.x;
+  const dy = nearestY - obj.correct.y;
+  const dist = Math.hypot(dx, dy);
+  const correctRot = ((obj.rotation % 360) + 360) % 360 === 0;
+  if(dist < pieceW * 0.45 && correctRot){ // adjust threshold as desired
+    obj.locked = true;
+    placed++;
+    if(placed === ROWS*COLS) win();
+  }
+}
+
+function spawnHearts(container, count = 30) {
+  for (let i = 0; i < count; i++) {
+    const heart = document.createElement("div");
+    heart.className = "heart";
+    
+    // Random starting position and animation duration
+    heart.style.left = Math.random() * 100 + "%";
+    heart.style.bottom = "-20px";
+    heart.style.animationDuration = 4 + Math.random() * 3 + "s";
+    heart.style.fontSize = 20 + Math.random() * 20 + "px";
+    heart.style.opacity = 0.8 + Math.random() * 0.2;
+
+    container.appendChild(heart);
+
+    // Remove heart after animation ends
+    heart.addEventListener("animationend", () => heart.remove());
+  }
+}
+
+function win(){
+  setTimeout(() => {
+    const overlay = document.createElement("div");
+    overlay.className = "win";
+    overlay.style.zIndex = 999999; // force it on top of all puzzle pieces
+  
+    const img = document.createElement("img");
+    img.src = WIN_IMAGE;
+    img.alt = "win";
+  
+    const msg = document.createElement("div");
+    msg.className = "msg";
+    msg.textContent = "💙 TWIN BOYS 💙";
+
+    overlay.appendChild(img);
+    overlay.appendChild(msg);
+    
+    board.appendChild(overlay);
+  }, 1000)
+
+  //spawnHearts(overlay, 50);
+  spawnHearts(document.body, 50);
+
+  WIN_SOUND.volume = 0.6; // optional: lower volume slightly
+  WIN_SOUND.play().catch(() => {}); // prevents errors if user hasn’t interacted yet
+}
+
+</script>
+</body>
+</html>
